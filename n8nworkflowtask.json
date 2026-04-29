@@ -10,3 +10,39 @@
     "Return success/error response"
   ]
 }
+
+
+#example of a code {
+  "name": "Contact Form Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "contact-form",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1a2b3c4d-0001-0001-0001-000000000001",
+      "name": "Contact Form Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "notes": "Entry point. Receives contact form submissions as POST requests."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate required fields before doing anything\nconst body = $input.first().json.body || $input.first().json;\n\nconst name = body.name || body.Name || '';\nconst email = body.email || body.Email || '';\nconst message = body.message || body.Message || '';\n\nif (!name || !email) {\n  throw new Error('Validation failed: name and email are required fields.');\n}\n\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nif (!emailRegex.test(email)) {\n  throw new Error(`Validation failed: '${email}' is not a valid email address.`);\n}\n\nreturn [{\n  json: {\n    name: name.trim(),\n    email: email.trim().toLowerCase(),\n    message: message.trim(),\n    submittedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "1a2b3c4d-0002-0002-0002-000000000002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "notes": "Validates name and email exist and email format is correct. Throws early so bad data never reaches downstream systems."
+    },
