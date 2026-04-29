@@ -1,0 +1,12 @@
+{
+  "trigger": "webhook POST /contact-form",
+  "steps": [
+    " Validate input (name + email required)",
+    "Check if email exists in sheet",
+    " New → Add to sheet",
+    " Existing → Skip",
+    "Send welcome email",
+    "Post to Slack",
+    "Return success/error response"
+  ]
+}
