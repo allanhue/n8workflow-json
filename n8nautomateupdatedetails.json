@@ -1,18 +1,4 @@
 {
-  "trigger": "webhook POST /contact-form",
-  "steps": [
-    " Validate input (name + email required)",
-    "Check if email exists in sheet",
-    " New → Add to sheet",
-    " Existing → Skip",
-    "Send welcome email",
-    "Post to Slack",
-    "Return success/error response"
-  ]
-}
-
-
-#example of a code {
   "name": "Contact Form Automation",
   "nodes": [
     {
@@ -26,10 +12,7 @@
       "name": "Contact Form Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "notes": "Entry point. Receives contact form submissions as POST requests."
     },
     {
@@ -40,9 +23,207 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        460,
-        300
-      ],
+      "position": [460, 300],
       "notes": "Validates name and email exist and email format is correct. Throws early so bad data never reaches downstream systems."
     },
+    {
+      "parameters": {
+        "jsCode": "// Mock Google Sheets lookup\n// In production: replace with Google Sheets node using 'Read Rows' + filter by email\n\nconst email = $input.first().json.email;\n\n// Simulated existing contacts in the sheet\nconst mockSheet = [\n  { email: 'existing@example.com', name: 'Existing User', addedAt: '2024-01-01' },\n  { email: 'test@canonical.com', name: 'Test Contact', addedAt: '2024-03-15' }\n];\n\nconst existingContact = mockSheet.find(row => row.email === email);\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    alreadyExists: !!existingContact,\n    existingSince: existingContact ? existingContact.addedAt : null\n  }\n}];"
+      },
+      "id": "1a2b3c4d-0003-0003-0003-000000000003",
+      "name": "Check Google Sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "Mocks a Google Sheets lookup. Checks if email already exists. Returns alreadyExists flag so the next node can branch."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-001",
+              "leftValue": "={{ $json.alreadyExists }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1a2b3c4d-0004-0004-0004-000000000004",
+      "name": "Is New Contact?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "notes": "Branches on alreadyExists. True branch = new contact, add to sheet. False branch = skip sheet, go straight to email."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mock adding a new row to Google Sheet\n// In production: replace with Google Sheets node 'Append Row'\n\nconst contact = $input.first().json;\n\n// Simulate the row being appended\nconst newRow = {\n  name: contact.name,\n  email: contact.email,\n  message: contact.message,\n  addedAt: contact.submittedAt,\n  rowId: Math.floor(Math.random() * 9000) + 1000 // mock row ID\n};\n\nconsole.log(`[MOCK] Added to Google Sheet: ${contact.email} at row ${newRow.rowId}`);\n\nreturn [{\n  json: {\n    ...contact,\n    sheetRowId: newRow.rowId,\n    addedToSheet: true\n  }\n}];"
+      },
+      "id": "1a2b3c4d-0005-0005-0005-000000000005",
+      "name": "Add to Google Sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 180],
+      "notes": "Mocks appending a new row. In production swap for Google Sheets append node. Passes sheetRowId downstream for audit trail."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass through existing contacts without modifying the sheet\n// Just flag them so downstream nodes know context\n\nconst contact = $input.first().json;\n\nconsole.log(`[INFO] Contact ${contact.email} already exists in sheet (since ${contact.existingSince}). Skipping append.`);\n\nreturn [{\n  json: {\n    ...contact,\n    addedToSheet: false,\n    skipReason: 'Contact already exists in sheet'\n  }\n}];"
+      },
+      "id": "1a2b3c4d-0006-0006-0006-000000000006",
+      "name": "Skip Sheet (Already Exists)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 420],
+      "notes": "Explicit no-op node for the existing contact path. Makes the workflow readable — anyone looking at it knows this path was handled intentionally, not forgotten."
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "1a2b3c4d-0007-0007-0007-000000000007",
+      "name": "Merge Paths",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [1340, 300],
+      "notes": "Reunites the two branches (new vs existing) so the email and Slack steps run for everyone."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mock sending a welcome email\n// In production: replace with Gmail or SendGrid node\n\nconst contact = $input.first().json;\n\nconst emailPayload = {\n  to: contact.email,\n  subject: `Welcome, ${contact.name}! We received your message.`,\n  body: `Hi ${contact.name},\\n\\nThank you for reaching out. We've received your message and will get back to you within 24 hours.\\n\\nYour message:\\n\"${contact.message}\"\\n\\nBest regards,\\nThe Team`,\n  sentAt: new Date().toISOString()\n};\n\nconsole.log(`[MOCK] Welcome email sent to: ${contact.email}`);\n\nreturn [{\n  json: {\n    ...contact,\n    emailSent: true,\n    emailSentAt: emailPayload.sentAt\n  }\n}];"
+      },
+      "id": "1a2b3c4d-0008-0008-0008-000000000008",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300],
+      "notes": "Mocks email dispatch. Production version uses Gmail or SendGrid node. Email body is personalised with name and original message."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mock posting a Slack notification to the team channel\n// In production: replace with Slack node, channel #new-contacts\n\nconst contact = $input.first().json;\n\nconst status = contact.addedToSheet ? '🆕 New contact added to sheet' : '🔁 Returning contact (already in sheet)';\n\nconst slackMessage = {\n  channel: '#new-contacts',\n  text: `${status}\\n*Name:* ${contact.name}\\n*Email:* ${contact.email}\\n*Message:* ${contact.message}\\n*Submitted:* ${contact.submittedAt}`,\n  postedAt: new Date().toISOString()\n};\n\nconsole.log(`[MOCK] Slack message posted to ${slackMessage.channel} for ${contact.email}`);\n\nreturn [{\n  json: {\n    ...contact,\n    slackPosted: true,\n    slackPostedAt: slackMessage.postedAt\n  }\n}];"
+      },
+      "id": "1a2b3c4d-0009-0009-0009-000000000009",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300],
+      "notes": "Mocks Slack notification. Message distinguishes new vs returning contacts so the team knows at a glance what happened."
+    },
+    {
+      "parameters": {
+        "jsCode": "const contact = $input.first().json;\n\nreturn [{\n  json: {\n    success: true,\n    message: `Workflow completed for ${contact.email}`,\n    summary: {\n      name: contact.name,\n      email: contact.email,\n      addedToSheet: contact.addedToSheet,\n      emailSent: contact.emailSent,\n      slackPosted: contact.slackPosted,\n      completedAt: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "1a2b3c4d-0010-0010-0010-000000000010",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300],
+      "notes": "Builds a clean summary response. Useful for debugging and for any upstream caller that wants confirmation."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "1a2b3c4d-0011-0011-0011-000000000011",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Global error handler — catches failures from any node\n// Logs the error and returns a structured failure response\n\nconst error = $input.first().json;\nconst errorMessage = error.message || error.error || 'Unknown error occurred';\nconst failedNode = error.node ? error.node.name : 'Unknown node';\n\nconsole.error(`[ERROR] Workflow failed at node '${failedNode}': ${errorMessage}`);\n\n// In production: also post to a #workflow-errors Slack channel or send an alert email\n\nreturn [{\n  json: {\n    success: false,\n    error: errorMessage,\n    failedAt: failedNode,\n    timestamp: new Date().toISOString(),\n    hint: 'Check n8n execution logs for full stack trace'\n  }\n}];"
+      },
+      "id": "1a2b3c4d-0012-0012-0012-000000000012",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 520],
+      "notes": "Catches any failure in the workflow. Logs which node failed and why. In production this would also alert the team via Slack or email so nothing silently breaks."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "1a2b3c4d-0013-0013-0013-000000000013",
+      "name": "Respond 500 Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2220, 520]
+    }
+  ],
+  "connections": {
+    "Contact Form Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Check Google Sheet", "type": "main", "index": 0 }]]
+    },
+    "Check Google Sheet": {
+      "main": [[{ "node": "Is New Contact?", "type": "main", "index": 0 }]]
+    },
+    "Is New Contact?": {
+      "main": [
+        [{ "node": "Add to Google Sheet", "type": "main", "index": 0 }],
+        [{ "node": "Skip Sheet (Already Exists)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Add to Google Sheet": {
+      "main": [[{ "node": "Merge Paths", "type": "main", "index": 0 }]]
+    },
+    "Skip Sheet (Already Exists)": {
+      "main": [[{ "node": "Merge Paths", "type": "main", "index": 1 }]]
+    },
+    "Merge Paths": {
+      "main": [[{ "node": "Send Welcome Email", "type": "main", "index": 0 }]]
+    },
+    "Send Welcome Email": {
+      "main": [[{ "node": "Post to Slack", "type": "main", "index": 0 }]]
+    },
+    "Post to Slack": {
+      "main": [[{ "node": "Success Response", "type": "main", "index": 0 }]]
+    },
+    "Success Response": {
+      "main": [[{ "node": "Respond 200 OK", "type": "main", "index": 0 }]]
+    },
+    "Error Handler": {
+      "main": [[{ "node": "Respond 500 Error", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "n8nVersion": "1.0.0"
+  }
+}
