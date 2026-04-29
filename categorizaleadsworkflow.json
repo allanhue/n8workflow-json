@@ -1,1 +1,574 @@
-#added example
+{
+  "name": "Multi-Source Lead Scoring & Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-webform",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-0001",
+      "name": "Web Form Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        100,
+        180
+      ],
+      "notes": "Entry point for web form leads. Expects JSON body with: name, email, company, companySize, industry."
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-gmail",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-0002",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        100,
+        380
+      ],
+      "notes": "Simulates Gmail shared inbox trigger. In production: replace with Gmail Trigger node watching a label like 'sales-leads'."
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-0003",
+      "name": "WhatsApp Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        100,
+        580
+      ],
+      "notes": "Simulates WhatsApp Business webhook. In production: replace with Twilio or WhatsApp Business API node."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Web Form lead\nconst body = $input.first().json.body || $input.first().json;\n\nif (!body.name || !body.email) {\n  throw new Error('Web form missing required fields: name and email are required.');\n}\n\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nif (!emailRegex.test(body.email)) {\n  throw new Error(`Invalid email format: ${body.email}`);\n}\n\nreturn [{\n  json: {\n    source: 'web_form',\n    name: body.name.trim(),\n    email: body.email.trim().toLowerCase(),\n    company: (body.company || 'Unknown').trim(),\n    companySize: body.companySize || 'unknown',\n    industry: (body.industry || 'unknown').toLowerCase().trim(),\n    phone: body.phone || null,\n    rawMessage: body.message || '',\n    receivedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "node-0004",
+      "name": "Normalize Web Form Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        340,
+        180
+      ],
+      "notes": "Validates required fields, checks email format, and maps to a standard lead shape all downstream nodes expect."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Gmail lead\n// Gmail is unstructured — we extract what we can from headers and body\nconst body = $input.first().json.body || $input.first().json;\n\n// Extract email from 'from' field e.g. \"John Doe <john@acme.com>\"\nconst fromRaw = body.from || '';\nconst emailMatch = fromRaw.match(/[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}/);\nif (!emailMatch) {\n  throw new Error(`Gmail lead: cannot extract email from 'from' field: '${fromRaw}'`);\n}\nconst email = emailMatch[0].toLowerCase();\n\n// Extract name from 'from' field or fall back to email prefix\nconst nameMatch = fromRaw.match(/^\"?([^\"<]+)\"?\\s*</);\nconst name = nameMatch ? nameMatch[1].trim() : email.split('@')[0];\n\n// Infer company from email domain (ignore common personal domains)\nconst domain = email.split('@')[1];\nconst personalDomains = ['gmail.com','yahoo.com','hotmail.com','outlook.com','icloud.com'];\nconst company = body.company || (!personalDomains.includes(domain)\n  ? domain.split('.')[0].charAt(0).toUpperCase() + domain.split('.')[0].slice(1)\n  : 'Unknown');\n\nreturn [{\n  json: {\n    source: 'gmail',\n    name: name,\n    email: email,\n    company: company,\n    companySize: body.companySize || 'unknown',\n    industry: (body.industry || 'unknown').toLowerCase().trim(),\n    phone: body.phone || null,\n    rawMessage: body.subject ? `Subject: ${body.subject}\\n${body.emailBody || ''}` : (body.emailBody || ''),\n    receivedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "node-0005",
+      "name": "Normalize Gmail Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        340,
+        380
+      ],
+      "notes": "Extracts structured data from unstructured email. Infers company from domain when not explicitly provided. Throws if no valid email found."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize WhatsApp lead\n// WhatsApp messages are the most unstructured source\n// We extract phone + whatever name/info was provided\nconst body = $input.first().json.body || $input.first().json;\n\nconst phone = body.phone || body.from || null;\nif (!phone) {\n  throw new Error('WhatsApp lead: phone number is required but was not provided.');\n}\n\n// Edge case: WhatsApp leads often have no email at all\n// We create a placeholder so downstream nodes don't break\nconst email = body.email\n  ? body.email.trim().toLowerCase()\n  : `whatsapp_${phone.replace(/[^0-9]/g, '')}@pending.local`;\n\nreturn [{\n  json: {\n    source: 'whatsapp',\n    name: (body.name || 'WhatsApp Lead').trim(),\n    email: email,\n    company: (body.company || 'Unknown').trim(),\n    companySize: body.companySize || 'unknown',\n    industry: (body.industry || 'unknown').toLowerCase().trim(),\n    phone: phone,\n    rawMessage: body.message || '',\n    emailIsPending: !body.email,\n    receivedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "node-0006",
+      "name": "Normalize WhatsApp Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        340,
+        580
+      ],
+      "notes": "WhatsApp leads rarely include email. We generate a placeholder email so the lead can still be stored and processed — flagged with emailIsPending:true for follow-up."
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "node-0007",
+      "name": "Merge All Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        580,
+        380
+      ],
+      "notes": "Combines all three normalized lead streams into one pipeline. After this point, all leads have the same shape regardless of source."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check lead against existing client list\n// Mock client list — in production replace with Google Sheets read or CRM API call\n\nconst lead = $input.first().json;\n\nconst existingClients = [\n  { email: 'ceo@acmecorp.com', company: 'Acme Corp', clientSince: '2022-03-01' },\n  { email: 'procurement@globex.com', company: 'Globex', clientSince: '2023-07-15' },\n  { email: 'info@initech.com', company: 'Initech', clientSince: '2021-11-20' },\n  { email: 'hello@umbrella.co', company: 'Umbrella Co', clientSince: '2024-01-08' }\n];\n\nconst existingClient = existingClients.find(c => c.email === lead.email);\n\nreturn [{\n  json: {\n    ...lead,\n    isExistingClient: !!existingClient,\n    clientSince: existingClient ? existingClient.clientSince : null\n  }\n}];"
+      },
+      "id": "node-0008",
+      "name": "Check Existing Client List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        380
+      ],
+      "notes": "Mock client database check. Flags existing clients so sales team isn't wasting time re-pitching current customers. In production: query CRM or Google Sheets."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Score the lead based on company size and industry\n// Scoring logic is explicit and easy to tune\n\nconst lead = $input.first().json;\n\n// Existing clients get a special score — they shouldn't be in new lead pipeline\nif (lead.isExistingClient) {\n  return [{\n    json: {\n      ...lead,\n      score: 0,\n      scoreBreakdown: { existingClient: true },\n      category: 'existing_client'\n    }\n  }];\n}\n\nlet score = 0;\nconst breakdown = {};\n\n// Score by company size\nconst sizeScores = {\n  'enterprise': 40,\n  'large': 30,\n  'medium': 20,\n  'small': 10,\n  'startup': 5,\n  'unknown': 0\n};\nconst sizeKey = (lead.companySize || 'unknown').toLowerCase();\nconst sizeScore = sizeScores[sizeKey] ?? 0;\nscore += sizeScore;\nbreakdown.companySize = { value: sizeKey, points: sizeScore };\n\n// Score by industry\nconst industryScores = {\n  'fintech': 35,\n  'finance': 35,\n  'banking': 35,\n  'healthcare': 30,\n  'technology': 25,\n  'saas': 25,\n  'software': 25,\n  'ecommerce': 20,\n  'retail': 15,\n  'manufacturing': 15,\n  'education': 10,\n  'ngo': 5,\n  'unknown': 0\n};\nconst industryKey = (lead.industry || 'unknown').toLowerCase();\nconst industryScore = industryScores[industryKey] ?? 0;\nscore += industryScore;\nbreakdown.industry = { value: industryKey, points: industryScore };\n\n// Bonus: phone number provided (more serious lead)\nif (lead.phone && !lead.emailIsPending) {\n  score += 10;\n  breakdown.hasPhone = { points: 10 };\n}\n\n// Bonus: came from web form (higher intent than WhatsApp)\nif (lead.source === 'web_form') {\n  score += 5;\n  breakdown.sourceBonus = { source: 'web_form', points: 5 };\n}\n\n// Categorise based on total score\nlet category;\nif (score >= 60) {\n  category = 'hot';\n} else if (score >= 30) {\n  category = 'warm';\n} else {\n  category = 'cold';\n}\n\nreturn [{\n  json: {\n    ...lead,\n    score,\n    scoreBreakdown: breakdown,\n    category\n  }\n}];"
+      },
+      "id": "node-0009",
+      "name": "Score Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        380
+      ],
+      "notes": "Scores leads 0-100 based on company size (40pts max) + industry (35pts max) + bonuses. Thresholds: 60+ = hot, 30-59 = warm, <30 = cold. Existing clients are flagged separately."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-hot",
+              "leftValue": "={{ $json.category }}",
+              "rightValue": "hot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-0010",
+      "name": "Is Hot Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        260
+      ],
+      "notes": "First branch: separates hot leads for immediate calendar booking."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-warm",
+              "leftValue": "={{ $json.category }}",
+              "rightValue": "warm",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-0011",
+      "name": "Is Warm Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        480
+      ],
+      "notes": "Second branch: separates warm leads for brochure email."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mock: Book hot lead into sales calendar\n// In production: replace with Google Calendar node or Calendly API\n\nconst lead = $input.first().json;\n\n// Edge case: WhatsApp lead with no real email — can't send calendar invite\nif (lead.emailIsPending) {\n  console.warn(`[WARN] Hot lead ${lead.name} has no email (WhatsApp source). Calendar invite cannot be sent. Flagging for manual follow-up.`);\n  return [{\n    json: {\n      ...lead,\n      calendarBooked: false,\n      calendarNote: 'No email available — WhatsApp lead requires manual booking',\n      requiresManualFollowUp: true,\n      actionTaken: 'hot_no_email'\n    }\n  }];\n}\n\n// Find next available Monday 9am slot (mock)\nconst now = new Date();\nconst daysUntilMonday = (8 - now.getDay()) % 7 || 7;\nconst nextMonday = new Date(now);\nnextMonday.setDate(now.getDate() + daysUntilMonday);\nnextMonday.setHours(9, 0, 0, 0);\n\nconst booking = {\n  title: `Sales Call — ${lead.name} (${lead.company})`,\n  attendee: lead.email,\n  start: nextMonday.toISOString(),\n  end: new Date(nextMonday.getTime() + 30 * 60000).toISOString(),\n  notes: `Lead source: ${lead.source} | Score: ${lead.score} | Industry: ${lead.industry}`\n};\n\nconsole.log(`[MOCK] Calendar booking created for ${lead.email} on ${nextMonday.toDateString()}`);\n\nreturn [{\n  json: {\n    ...lead,\n    calendarBooked: true,\n    calendarBooking: booking,\n    actionTaken: 'calendar_booked'\n  }\n}];"
+      },
+      "id": "node-0012",
+      "name": "Book Sales Calendar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        160
+      ],
+      "notes": "Mocks calendar booking for hot leads. Handles the WhatsApp edge case where no email exists — flags for manual follow-up instead of silently failing."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mock: Send brochure email to warm lead\n// In production: replace with Gmail or SendGrid node\n\nconst lead = $input.first().json;\n\nif (lead.emailIsPending) {\n  console.warn(`[WARN] Warm lead ${lead.name} has no email. Cannot send brochure. Flagging for manual outreach.`);\n  return [{\n    json: {\n      ...lead,\n      emailSent: false,\n      emailNote: 'No email — WhatsApp lead requires manual brochure send',\n      requiresManualFollowUp: true,\n      actionTaken: 'warm_no_email'\n    }\n  }];\n}\n\nconst emailPayload = {\n  to: lead.email,\n  subject: `${lead.company} — Resources from our team`,\n  body: `Hi ${lead.name},\\n\\nThanks for your interest. I've attached our company brochure which covers how we work with ${lead.industry} businesses.\\n\\nWould love to find 20 minutes to chat when you're ready.\\n\\nBest,\\nThe Sales Team`,\n  attachments: ['company_brochure_2025.pdf'],\n  sentAt: new Date().toISOString()\n};\n\nconsole.log(`[MOCK] Brochure email sent to ${lead.email}`);\n\nreturn [{\n  json: {\n    ...lead,\n    emailSent: true,\n    emailSentAt: emailPayload.sentAt,\n    actionTaken: 'brochure_sent'\n  }\n}];"
+      },
+      "id": "node-0013",
+      "name": "Send Brochure Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        380
+      ],
+      "notes": "Mocks brochure email for warm leads. Email is personalised with company name and industry. Handles missing email edge case."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mock: Add cold lead to drip campaign list\n// In production: replace with Mailchimp, ActiveCampaign, or HubSpot node\n\nconst lead = $input.first().json;\n\n// Determine drip sequence based on industry\nconst dripSequences = {\n  'education': 'drip_education_nurture',\n  'ngo': 'drip_ngo_nurture',\n  'retail': 'drip_retail_nurture',\n  'manufacturing': 'drip_manufacturing_nurture'\n};\n\nconst sequence = dripSequences[lead.industry] || 'drip_general_nurture';\n\nconst dripEntry = {\n  listId: 'cold_leads_2025',\n  sequence: sequence,\n  contact: {\n    name: lead.name,\n    email: lead.emailIsPending ? null : lead.email,\n    phone: lead.phone,\n    company: lead.company,\n    industry: lead.industry,\n    score: lead.score\n  },\n  addedAt: new Date().toISOString(),\n  firstEmailScheduled: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString()\n};\n\nconsole.log(`[MOCK] Cold lead ${lead.name} added to drip sequence: ${sequence}`);\n\nreturn [{\n  json: {\n    ...lead,\n    addedToDrip: true,\n    dripSequence: sequence,\n    firstEmailAt: dripEntry.firstEmailScheduled,\n    actionTaken: 'added_to_drip'\n  }\n}];"
+      },
+      "id": "node-0014",
+      "name": "Add to Drip List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        580
+      ],
+      "notes": "Adds cold leads to a drip sequence. Industry-specific sequences for better relevance. First email scheduled 3 days out."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle existing clients — route away from new lead pipeline\n// Notify sales team so they can do an upsell conversation instead\n\nconst lead = $input.first().json;\n\nconsole.log(`[INFO] ${lead.email} is an existing client (since ${lead.clientSince}). Routing to account management.`);\n\nreturn [{\n  json: {\n    ...lead,\n    actionTaken: 'existing_client_flagged',\n    routedTo: 'account_management',\n    note: `Existing client since ${lead.clientSince} — consider upsell conversation`\n  }\n}];"
+      },
+      "id": "node-0015",
+      "name": "Flag Existing Client",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        680
+      ],
+      "notes": "Existing clients are routed out of the new lead pipeline entirely. Flags for account management team to handle — could be an upsell opportunity."
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "node-0016",
+      "name": "Merge All Outcomes",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        1700,
+        400
+      ],
+      "notes": "Reunites all paths (hot/warm/cold/existing) for the final logging step."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log every lead outcome to a central audit trail\n// In production: write to Google Sheets, a database, or a logging service\n\nconst lead = $input.first().json;\n\nconst auditEntry = {\n  timestamp: new Date().toISOString(),\n  source: lead.source,\n  name: lead.name,\n  email: lead.email,\n  company: lead.company,\n  industry: lead.industry,\n  companySize: lead.companySize,\n  score: lead.score,\n  category: lead.category,\n  actionTaken: lead.actionTaken,\n  isExistingClient: lead.isExistingClient,\n  requiresManualFollowUp: lead.requiresManualFollowUp || false\n};\n\nconsole.log('[AUDIT]', JSON.stringify(auditEntry));\n\n// Flag manual follow-ups so nothing falls through the cracks\nif (lead.requiresManualFollowUp) {\n  console.warn(`[ACTION REQUIRED] ${lead.name} (${lead.source}) needs manual follow-up — no email available.`);\n}\n\nreturn [{ json: { success: true, audit: auditEntry } }];"
+      },
+      "id": "node-0017",
+      "name": "Log Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        400
+      ],
+      "notes": "Central audit log for every lead processed. Flags manual follow-ups. In production this writes to a Google Sheet or database so the team has a full record."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-0018",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2140,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Global error handler\nconst error = $input.first().json;\nconst message = error.message || error.error || 'Unknown error';\nconst failedNode = error.node ? error.node.name : 'Unknown node';\n\nconsole.error(`[ERROR] Failed at '${failedNode}': ${message}`);\n\n// In production: post to #workflow-errors Slack channel\n// and page on-call if source is web_form (highest intent)\n\nreturn [{\n  json: {\n    success: false,\n    error: message,\n    failedAt: failedNode,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "node-0019",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        600
+      ],
+      "notes": "Catches failures from any node. Logs which node failed and why. In production this alerts the team so no lead is silently lost."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "node-0020",
+      "name": "Respond 500 Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2140,
+        600
+      ]
+    }
+  ],
+  "connections": {
+    "Web Form Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Web Form Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Gmail Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize WhatsApp Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Web Form Lead": {
+      "main": [
+        [
+          {
+            "node": "Merge All Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Gmail Lead": {
+      "main": [
+        [
+          {
+            "node": "Merge All Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Normalize WhatsApp Lead": {
+      "main": [
+        [
+          {
+            "node": "Merge All Sources",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge All Sources": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Client List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Client List": {
+      "main": [
+        [
+          {
+            "node": "Score Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Lead": {
+      "main": [
+        [
+          {
+            "node": "Is Hot Lead?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Warm Lead?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Flag Existing Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Hot Lead?": {
+      "main": [
+        [
+          {
+            "node": "Book Sales Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Warm Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Warm Lead?": {
+      "main": [
+        [
+          {
+            "node": "Send Brochure Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Add to Drip List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book Sales Calendar": {
+      "main": [
+        [
+          {
+            "node": "Merge All Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Brochure Email": {
+      "main": [
+        [
+          {
+            "node": "Merge All Outcomes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Add to Drip List": {
+      "main": [
+        [
+          {
+            "node": "Merge All Outcomes",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Flag Existing Client": {
+      "main": [
+        [
+          {
+            "node": "Merge All Outcomes",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge All Outcomes": {
+      "main": [
+        [
+          {
+            "node": "Log Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Outcome": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Respond 500 Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "meta": {
+    "n8nVersion": "1.0.0"
+  }
+}
